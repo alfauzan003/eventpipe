@@ -20,6 +20,9 @@
     <properties>
         <java.version>21</java.version>
         <maven.compiler.release>21</maven.compiler.release>
+        <!-- Newer docker-java defaults to API >= 1.44; Testcontainers 1.20.x (API 1.40)
+             is rejected by current Docker engines (>= 28), e.g. Docker Desktop 4.64. -->
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -36,14 +39,35 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+        </plugin>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+                <systemPropertyVariables>
+                    <!-- Allow Mockito/Byte Buddy to run on newer JDKs (e.g. local JDK 25);
+                         harmless on CI's JDK 21. -->
+                    <net.bytebuddy.experimental>true</net.bytebuddy.experimental>
+                </systemPropertyVariables>
+            </configuration>
+        </plugin>
         </plugins>
     </build>
 </project>
