@@ -3,9 +3,11 @@ package com.eventpipe.api;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
@@ -19,9 +21,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.eventpipe.event.EventEnvelope;
 import com.eventpipe.event.EventPublisher;
+import com.eventpipe.event.EventStreamService;
 import com.eventpipe.event.ProcessedEventService;
 
 @WebMvcTest(EventController.class)
@@ -35,6 +40,9 @@ class EventControllerTest {
 
     @MockBean
     private ProcessedEventService processedEventService;
+
+    @MockBean
+    private EventStreamService eventStreamService;
 
     @Test
     void publishReturns202WithFullEnvelope() throws Exception {
@@ -92,5 +100,20 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.totalProcessed").value(3))
                 .andExpect(jsonPath("$.byType['order.created']").value(2))
                 .andExpect(jsonPath("$.byType['order.shipped']").value(1));
+    }
+
+    @Test
+    void streamReturnsSseEmitter() throws Exception {
+        SseEmitter emitter = new SseEmitter();
+        when(eventStreamService.subscribe()).thenReturn(emitter);
+
+        MvcResult result = mockMvc.perform(get("/api/events/stream"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        // Completing the emitter resolves the async request with 200 OK.
+        emitter.complete();
+        mockMvc.perform(asyncDispatch(result))
+                .andExpect(status().isOk());
     }
 }

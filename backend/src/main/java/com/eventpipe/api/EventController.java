@@ -11,8 +11,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
 import com.eventpipe.event.EventEnvelope;
 import com.eventpipe.event.EventPublisher;
+import com.eventpipe.event.EventStreamService;
 import com.eventpipe.event.ProcessedEventService;
 import com.eventpipe.event.PublishEventRequest;
 
@@ -26,10 +29,14 @@ public class EventController {
 
     private final EventPublisher eventPublisher;
     private final ProcessedEventService processedEventService;
+    private final EventStreamService eventStreamService;
 
-    public EventController(EventPublisher eventPublisher, ProcessedEventService processedEventService) {
+    public EventController(EventPublisher eventPublisher,
+                           ProcessedEventService processedEventService,
+                           EventStreamService eventStreamService) {
         this.eventPublisher = eventPublisher;
         this.processedEventService = processedEventService;
+        this.eventStreamService = eventStreamService;
     }
 
     /**
@@ -63,5 +70,14 @@ public class EventController {
     @GetMapping("/last")
     public List<EventEnvelope> last(@RequestParam(name = "limit", defaultValue = "10") int limit) {
         return processedEventService.last(limit);
+    }
+
+    /**
+     * Server-sent-events live feed: one long-lived stream per client that emits
+     * an {@code event.processed} frame for every successfully processed event.
+     */
+    @GetMapping("/stream")
+    public SseEmitter stream() {
+        return eventStreamService.subscribe();
     }
 }

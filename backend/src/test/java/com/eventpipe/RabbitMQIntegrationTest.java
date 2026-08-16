@@ -2,8 +2,10 @@ package com.eventpipe;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
@@ -19,13 +21,17 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.testcontainers.containers.RabbitMQContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.eventpipe.event.EventEnvelope;
 import com.eventpipe.event.EventPublisher;
+import com.eventpipe.event.EventStreamService;
 import com.eventpipe.event.ProcessedEventService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * End-to-end messaging tests over a real RabbitMQ broker (Testcontainers):
@@ -57,6 +63,12 @@ class RabbitMQIntegrationTest {
 
     @Autowired
     private ProcessedEventService processedEventService;
+
+    @Autowired
+    private EventStreamService eventStreamService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @BeforeEach
     void resetStore() {
@@ -108,6 +120,36 @@ class RabbitMQIntegrationTest {
         assertThat(processedEventService.last(10)).hasSize(1);
     }
 
+    @Test
+    void sseStreamDeliversProcessedEventsToSubscribers() throws Exception {
+        int subscribersBefore = eventStreamService.subscriberCount();
+
+        // Open a live SSE stream.
+        MvcResult stream = mockMvc.perform(get("/api/events/stream"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        assertThat(eventStreamService.subscriberCount()).isEqualTo(subscribersBefore + 1);
+
+        // Publish an event through the API; the consumer broadcasts it to the stream.
+        MvcResult publish = mockMvc.perform(post("/api/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"order.created\",\"payload\":{\"orderId\":42}}"))
+                .andExpect(status().isAccepted())
+                .andReturn();
+        JsonNode envelope = objectMapper.readTree(publish.getResponse().getContentAsString());
+        String eventId = envelope.get("eventId").asText();
+
+        awaitTotalProcessed(1);
+
+        // The SSE frame for the processed event must appear on the open stream.
+        String frame = awaitSseFrame(stream, "event:" + EventStreamService.PROCESSED_EVENT);
+        assertThat(frame).contains(eventId);
+        assertThat(frame).contains("\"order.created\"");
+
+        // The subscriber's connection is still open.
+        assertThat(eventStreamService.subscriberCount()).isEqualTo(subscribersBefore + 1);
+    }
+
     private void awaitTotalProcessed(int expected) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 15_000;
         while (System.currentTimeMillis() < deadline) {
@@ -118,5 +160,19 @@ class RabbitMQIntegrationTest {
         }
         fail("Timed out waiting for %d processed events; counts=%s"
                 .formatted(expected, processedEventService.counts()));
+    }
+
+    /** Polls the streamed response until it contains the expected SSE frame. */
+    private String awaitSseFrame(MvcResult stream, String marker) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        String content = "";
+        while (System.currentTimeMillis() < deadline) {
+            content = stream.getResponse().getContentAsString();
+            if (content.contains(marker)) {
+                return content;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("SSE stream never contained '%s'; got: %s".formatted(marker, content));
     }
 }
